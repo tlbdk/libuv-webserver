@@ -6,8 +6,7 @@
 
 #define CHECK(r, msg) \
   if (r) { \
-    uv_err_t err = uv_last_error(uv_loop); \
-    fprintf(stderr, "%s: %s\n", msg, uv_strerror(err)); \
+    fprintf(stderr, "%s: %s\n", msg, uv_strerror(r)); \
     exit(1); \
   }
 #define UVERR(err, msg) fprintf(stderr, "%s: %s\n", msg, uv_strerror(err))
@@ -43,33 +42,30 @@ void on_close(uv_handle_t* handle) {
   free(client);
 }
 
-uv_buf_t on_alloc(uv_handle_t* client, size_t suggested_size) {
-  uv_buf_t buf;
-  buf.base = malloc(suggested_size);
-  buf.len = suggested_size;
-  return buf;
+static void on_alloc(uv_handle_t* client, size_t suggested_size, uv_buf_t* buf) {
+  buf->base = malloc(suggested_size);
+  buf->len = suggested_size;
 }
 
-void on_read(uv_stream_t* tcp, ssize_t nread, uv_buf_t buf) {
+static void on_read(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf) {
   size_t parsed;
 
   client_t* client = (client_t*) tcp->data;
 
   if (nread >= 0) {
-    parsed = http_parser_execute(
-        &client->parser, &parser_settings, buf.base, nread);
+    parsed = http_parser_execute(&client->parser, &parser_settings, buf->base, nread);
     if (parsed < nread) {
       LOG_ERROR("parse error");
       uv_close((uv_handle_t*) &client->handle, on_close);
     }
   } else {
-    uv_err_t err = uv_last_error(uv_loop);
+    /* uv_err_t err = uv_last_error(uv_loop);
     if (err.code != UV_EOF) {
       UVERR(err, "read");
-    }
+    } */
   }
 
-  free(buf.base);
+  free(buf->base);
 }
 
 static int request_num = 1;
@@ -121,6 +117,7 @@ int on_headers_complete(http_parser* parser) {
 
 int main() {
   int r;
+  struct sockaddr_in address;
 
   parser_settings.on_headers_complete = on_headers_complete;
   
@@ -132,13 +129,13 @@ int main() {
   r = uv_tcp_init(uv_loop, &server);
   CHECK(r, "bind");
 
-  struct sockaddr_in address = uv_ip4_addr("0.0.0.0", 8000);
+  uv_ip4_addr("0.0.0.0", 8000, &address);
 
-  r = uv_tcp_bind(&server, address);
+  r = uv_tcp_bind(&server, (const struct sockaddr*) &address);
   CHECK(r, "bind");
   uv_listen((uv_stream_t*)&server, 128, on_connect);
 
   LOG("listening on port 8000");
 
-  uv_run(uv_loop);
+  uv_run(uv_loop, UV_RUN_DEFAULT);
 }
